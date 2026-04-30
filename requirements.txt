@@ -1,0 +1,15 @@
+pandas
+numpy
+matplotlib
+seaborn
+yfinance
+scipy
+scikit-learn
+torch
+neuralforecast
+chronos-forecasting
+transformers
+accelerate
+tqdm
+ipykernel
+jupyter

@@ -1,0 +1,20 @@
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+.env
+venv/
+.venv/
+
+# Generated outputs
+notebooks/lightning_logs/
+results/new_models/plots/*.png
+
+# Local model repo internals and cache files
+models/Kronos/.git/
+models/Kronos/**/__pycache__/
+
+# OS/editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
