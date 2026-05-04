@@ -77,15 +77,23 @@ def compute_adx(df, period=14):
 
 @st.cache_data(ttl=300, show_spinner=False)
 def fetch_data(interval: str, period: str, resample: str | None = None) -> pd.DataFrame:
-    df = yf.download(TICKER, interval=interval, period=period, progress=False)
-    df.columns = df.columns.get_level_values(0)
-    df = df[["Open", "High", "Low", "Close", "Volume"]].dropna()
-    df.index = pd.to_datetime(df.index, utc=True)
+    ticker = yf.Ticker(TICKER)
+    df = ticker.history(interval=interval, period=period)
+    if df.empty:
+        raise ValueError(f"yfinance returned no data for {TICKER} (interval={interval}, period={period})")
     df.columns = [c.lower() for c in df.columns]
+    keep = [c for c in ["open", "high", "low", "close", "volume"] if c in df.columns]
+    df = df[keep].dropna()
+    if not df.index.tz:
+        df.index = df.index.tz_localize("UTC")
+    else:
+        df.index = df.index.tz_convert("UTC")
     if resample:
         df = df.resample(resample).agg(
             {"open": "first", "high": "max", "low": "min", "close": "last", "volume": "sum"}
         ).dropna()
+    if df.empty:
+        raise ValueError(f"DataFrame empty after processing (interval={interval})")
     return df
 
 
@@ -192,7 +200,11 @@ if not generate:
 with st.spinner("Fetching live Gold data and running ensemble models..."):
 
     cfg = TIMEFRAMES[entry_tf]
-    df  = fetch_data(cfg["interval"], cfg["period"], cfg.get("resample"))
+    try:
+        df = fetch_data(cfg["interval"], cfg["period"], cfg.get("resample"))
+    except Exception as e:
+        st.error(f"Failed to fetch Gold data: {e}\n\nMarkets may be closed or yfinance is rate-limited. Try again in a minute.")
+        st.stop()
 
     cur_px  = float(df["close"].iloc[-1])
     atr14   = float(compute_atr(df, 14).iloc[-1])
