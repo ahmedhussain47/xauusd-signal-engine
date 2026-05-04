@@ -1,18 +1,25 @@
 #!/bin/bash
 # RunPod overnight run — executes all notebooks in order.
-# Usage: bash run_all.sh
-# Estimated time: 3-6 hours depending on GPU/CPU speed.
+# Usage:
+#   bash run_all.sh          → full run (all 5 notebooks)
+#   bash run_all.sh --skip-data  → skip notebooks 01 & 02 (data already downloaded)
 
-set -e  # stop on first error
+set -e
 
 REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
 LOG_DIR="$REPO_DIR/logs"
 mkdir -p "$LOG_DIR"
 
+SKIP_DATA=false
+if [[ "$1" == "--skip-data" ]]; then
+    SKIP_DATA=true
+fi
+
 echo "========================================"
 echo "  Equity Forecasting — Full Pipeline Run"
 echo "  $(date)"
 echo "  Working dir: $REPO_DIR"
+echo "  Skip data:   $SKIP_DATA"
 echo "========================================"
 
 run_notebook() {
@@ -32,19 +39,16 @@ run_notebook() {
     echo "    Done: $(date)"
 }
 
-# Step 1: Fetch raw price data for all 160 tickers
-run_notebook "notebooks/01_data_collection.ipynb"       "1/5 Data Collection"
+if [[ "$SKIP_DATA" == false ]]; then
+    run_notebook "notebooks/01_data_collection.ipynb"          "1/5 Data Collection"
+    run_notebook "notebooks/02_prepare_forecasting_data.ipynb" "2/5 Prepare Data"
+else
+    echo ""
+    echo ">>> Skipping notebooks 01 & 02 (--skip-data flag set)"
+fi
 
-# Step 2: Build the prepared panel (returns, features)
-run_notebook "notebooks/02_prepare_forecasting_data.ipynb" "2/5 Prepare Data"
-
-# Step 3: Run all models (Classical, N-BEATS, PatchTST, Chronos, Kronos, Embeddings)
 run_notebook "notebooks/03_run_new_models_complete.ipynb"  "3/5 Run Models"
-
-# Step 4: Barrier classifier (BarrierRF + BarrierXGB, 9-core parallel)
 run_notebook "notebooks/barrier_classifier.ipynb"          "4/5 Barrier Classifier"
-
-# Step 5: Final analysis, RankIC, plots, comparison table
 run_notebook "notebooks/04_final_analysis.ipynb"           "5/5 Final Analysis"
 
 echo ""
