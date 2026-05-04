@@ -248,7 +248,7 @@ def run_classical_models(
         sf = StatsForecast(
             models=model_objects,
             freq=config.freq,
-            n_jobs=-1,
+            n_jobs=1,
         )
         fcst = sf.forecast(df=train_df, h=max_horizon).reset_index()
         fcst = fcst.sort_values(["unique_id", "ds"])
