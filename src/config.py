@@ -56,7 +56,7 @@ END_DATE = None  # None means today in yfinance
 
 # Low-compute settings. Increase later only after the pipeline works.
 HORIZONS = [1, 5]
-INPUT_SIZE = 252
+INPUT_SIZE = 126
 TEST_STEP = 21
 MAX_TEST_DATES = 36
 MAX_STEPS = 100
