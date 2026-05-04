@@ -35,10 +35,10 @@ END_DATE = None  # None means today in yfinance
 HORIZONS = [1, 5]
 INPUT_SIZE = 252
 TEST_STEP = 21
-MAX_TEST_DATES = 18
+MAX_TEST_DATES = 36
 MAX_STEPS = 100
 FREQ = "B"
-MIN_ASSETS_FOR_RANKIC = 20
+MIN_ASSETS_FOR_RANKIC = 100
 RANDOM_SEED = 42
 
 # Foundation model settings.
