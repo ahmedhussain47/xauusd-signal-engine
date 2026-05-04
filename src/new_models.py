@@ -23,6 +23,7 @@ class BenchmarkConfig:
 
 
 def _actual_close_at(panel: pd.DataFrame, ticker: str, cutoff_date: pd.Timestamp, horizon: int) -> tuple[pd.Timestamp, float, float] | None:
+    price_col = "adj_close" if "adj_close" in panel.columns else "close"
     g = panel[panel["Ticker"] == ticker].sort_values("Date").reset_index(drop=True)
     matches = g.index[g["Date"] == cutoff_date].tolist()
     if not matches:
@@ -31,8 +32,8 @@ def _actual_close_at(panel: pd.DataFrame, ticker: str, cutoff_date: pd.Timestamp
     target_idx = idx + horizon
     if target_idx >= len(g):
         return None
-    last_close = float(g.loc[idx, "close"])
-    actual_close = float(g.loc[target_idx, "close"])
+    last_close = float(g.loc[idx, price_col])
+    actual_close = float(g.loc[target_idx, price_col])
     target_date = pd.Timestamp(g.loc[target_idx, "Date"])
     return target_date, last_close, actual_close
 

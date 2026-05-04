@@ -10,25 +10,48 @@ for path in [DATA_RAW_DIR, DATA_PROCESSED_DIR, RESULTS_DIR, PLOTS_DIR]:
     path.mkdir(parents=True, exist_ok=True)
 
 TICKERS = [
-    "AAPL", "MSFT", "GOOGL", "AMZN", "GC=F", "META", "NVDA", "TSLA", "AMD", "SI=F",
-    "INTC", "QCOM", "AVGO", "ADBE", "CL=F", "CRM", "ORCL", "CSCO", "IBM", "BZ=F",
-    "TXN", "MU", "KLAC", "LRCX", "NG=F", "PANW", "CRWD", "NET", "PLTR", "HG=F",
-    "SNOW", "JPM", "BAC", "GS", "PL=F", "MS", "V", "MA", "AXP", "ZC=F",
-    "WFC", "C", "BLK", "SPGI", "ZS=F", "MCO", "PYPL", "USB", "PNC", "ZW=F",
-    "TFC", "ICE", "CME", "BX", "EURUSD=X", "KKR", "JNJ", "UNH", "LLY", "USDJPY=X",
-    "PFE", "ABBV", "AMGN", "GILD", "GBPUSD=X", "MRK", "BMY", "TMO", "ABT", "AUDUSD=X",
-    "MDT", "BSX", "SYK", "ISRG", "USDCHF=X", "WMT", "PG", "KO", "PEP", "USDCAD=X",
-    "COST", "MDLZ", "CL", "MO", "NZDUSD=X", "PM", "EL", "MCD", "SBUX", "EURGBP=X",
-    "NKE", "HD", "LOW", "TGT", "EURJPY=X", "BKNG", "CMG", "ORLY", "TJX", "GBPJPY=X",
-    "XOM", "CVX", "COP", "EOG", "AUDJPY=X", "SLB", "PSX", "VLO", "MPC", "CADJPY=X",
-    "OXY", "HAL", "HON", "CAT", "EURCHF=X", "DE", "BA", "GE", "MMM", "EURAUD=X",
-    "UPS", "FDX", "LMT", "RTX", "EURCAD=X", "DIS", "NFLX", "CMCSA", "T", "GBPCHF=X",
-    "VZ", "SPOT", "SNAP", "ZM", "GBPAUD=X", "LIN", "APD", "SHW", "FCX", "GBPCAD=X",
-    "NEM", "ECL", "AMT", "PLD", "AUDCAD=X", "EQIX", "PSA", "WELL", "O", "CHFJPY=X",
-    "UBER", "ABNB", "ETSY", "EBAY", "DELL", "HPQ", "WM", "RSG", "INTU", "NOW",
+    # US Technology
+    "AAPL", "MSFT", "GOOGL", "AMZN", "META", "NVDA", "TSLA", "AMD",
+    "INTC", "QCOM", "AVGO", "ADBE", "CRM", "ORCL", "CSCO", "IBM",
+    "TXN", "MU", "KLAC", "LRCX", "PANW", "CRWD", "NET", "PLTR",
+    "SNOW", "INTU", "NOW", "DELL", "HPQ",
+    # US Financials
+    "JPM", "BAC", "GS", "MS", "V", "MA", "AXP",
+    "WFC", "C", "BLK", "SPGI", "MCO", "PYPL", "USB", "PNC",
+    "TFC", "ICE", "CME", "BX", "KKR",
+    # US Healthcare
+    "JNJ", "UNH", "LLY", "PFE", "ABBV", "AMGN", "GILD", "MRK", "BMY",
+    "TMO", "ABT", "MDT", "BSX", "SYK", "ISRG",
+    # US Consumer
+    "WMT", "PG", "KO", "PEP", "COST", "MDLZ", "MO", "PM", "EL",
+    "MCD", "SBUX", "NKE", "HD", "LOW", "TGT", "BKNG", "CMG", "ORLY", "TJX",
+    # US Energy & Industrials
+    "XOM", "CVX", "COP", "EOG", "SLB", "PSX", "VLO", "MPC", "OXY", "HAL",
+    "HON", "CAT", "DE", "BA", "GE", "MMM", "UPS", "FDX", "LMT", "RTX",
+    # US Media & Telecom
+    "DIS", "NFLX", "CMCSA", "T", "VZ", "SPOT", "SNAP", "ZM",
+    # US Materials & Real Estate
+    "LIN", "APD", "SHW", "FCX", "NEM", "ECL", "AMT", "PLD", "EQIX", "PSA", "WELL", "O",
+    # US Other
+    "UBER", "ABNB", "ETSY", "EBAY", "WM", "RSG",
+    # Europe ADRs (USD-listed on NYSE/NASDAQ)
+    "ASML", "SAP", "NVO", "AZN", "SHEL", "BP", "RIO", "BHP", "GSK", "UL", "DEO", "BTI",
+    # Asia ADRs
+    "TSM", "BABA", "JD", "BIDU", "NTES", "TM", "HMC", "SONY", "HSBC", "SE",
+    # Canada ADRs
+    "SHOP", "TD", "RY", "CNI", "CP", "ENB", "SU", "MFC",
+    # Emerging Markets ADRs
+    "VALE", "ITUB", "INFY", "HDB", "MELI", "PBR", "WIT", "GOLD",
+    # Commodities futures
+    "GC=F", "SI=F", "CL=F", "BZ=F", "NG=F", "HG=F", "PL=F", "ZC=F", "ZW=F", "ZS=F",
+    # Major Forex pairs
+    "EURUSD=X", "USDJPY=X", "GBPUSD=X", "AUDUSD=X", "USDCHF=X", "USDCAD=X",
+    "NZDUSD=X", "EURGBP=X", "EURJPY=X", "GBPJPY=X", "AUDJPY=X", "CADJPY=X",
+    "EURCHF=X", "EURAUD=X", "EURCAD=X", "GBPCHF=X", "GBPAUD=X", "GBPCAD=X",
+    "AUDCAD=X", "CHFJPY=X",
 ]
 
-START_DATE = "2019-01-01"
+START_DATE = "2015-01-01"
 END_DATE = None  # None means today in yfinance
 
 # Low-compute settings. Increase later only after the pipeline works.

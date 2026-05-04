@@ -87,8 +87,9 @@ def prepare_single_ticker(raw_path: Path, processed_dir: Path, freq: str = "B") 
     df[volume_cols] = df[volume_cols].fillna(0)
 
     df = df.reset_index()
-    df["return_1d"] = df["close"].pct_change()
-    df["log_return_1d"] = np.log(df["close"]).diff()
+    price_for_returns = "adj_close" if "adj_close" in df.columns else "close"
+    df["return_1d"] = df[price_for_returns].pct_change()
+    df["log_return_1d"] = np.log(df[price_for_returns]).diff()
     df["volume"] = df.get("volume", 0)
     df["amount"] = df["close"] * df["volume"].fillna(0)
 
@@ -130,8 +131,9 @@ def load_prepared_panel(processed_dir: Path) -> pd.DataFrame:
 
 
 def to_neuralforecast_df(panel: pd.DataFrame) -> pd.DataFrame:
-    nf_df = panel[["Ticker", "Date", "close"]].copy()
-    nf_df = nf_df.rename(columns={"Ticker": "unique_id", "Date": "ds", "close": "y"})
+    price_col = "adj_close" if "adj_close" in panel.columns else "close"
+    nf_df = panel[["Ticker", "Date", price_col]].copy()
+    nf_df = nf_df.rename(columns={"Ticker": "unique_id", "Date": "ds", price_col: "y"})
     nf_df = nf_df.dropna(subset=["y"])
     return nf_df
 
