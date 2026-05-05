@@ -258,13 +258,15 @@ def compute_sl_tp(df, direction, entry, atr14, swing_bars, atr_mult, rr_ratio):
     s_low  = float(df["low"].tail(swing_bars).min())
     atr_sl = atr14 * atr_mult
     if direction == "SELL":
+        # SL above swing high or ATR, whichever is wider
         sl      = round(max(entry + atr_sl, s_high + atr14 * 0.3), 2)
         sl_dist = sl - entry
-        tp      = round(max(entry - sl_dist * rr_ratio, s_low - atr14 * 0.2), 2)
+        tp      = round(entry - sl_dist * rr_ratio, 2)   # guaranteed R:R
     else:
+        # SL below swing low or ATR, whichever is wider
         sl      = round(min(entry - atr_sl, s_low - atr14 * 0.3), 2)
         sl_dist = entry - sl
-        tp      = round(min(entry + sl_dist * rr_ratio, s_high + atr14 * 0.2), 2)
+        tp      = round(entry + sl_dist * rr_ratio, 2)   # guaranteed R:R
     return sl, tp, abs(sl_dist)
 
 
