@@ -17,6 +17,18 @@ from plotly.subplots import make_subplots
 from statsforecast import StatsForecast
 from statsforecast.models import AutoTheta, AutoETS
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
+
+_CET = ZoneInfo("Europe/Berlin")   # CET/CEST auto-switches with DST
+
+def _now_cet() -> str:
+    return datetime.now(_CET).strftime("%Y-%m-%d %H:%M CET")
+
+def _ts_cet(ts) -> str:
+    return ts.astimezone(_CET).strftime("%Y-%m-%d %H:%M CET")
+
+def _ts_cet_sec(ts) -> str:
+    return ts.astimezone(_CET).strftime("%Y-%m-%d %H:%M:%S CET")
 
 # ── Page config ──────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -288,7 +300,7 @@ with tab_signal:
 
     st.caption(
         f"AutoTheta ({W_THETA:.0%}) + AutoETS ({W_ETS:.0%}) ensemble  |  "
-        f"Live via yfinance  |  {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}"
+        f"Live via yfinance  |  {_now_cet()}"
     )
 
     generate = st.button("⚡ Generate Signal", type="primary", use_container_width=True)
@@ -357,7 +369,7 @@ with tab_signal:
                 tf_dirs=tf_dirs, entry=entry, sl=sl, tp=tp,
                 sl_dist=sl_dist, risk_usd=risk_usd, pos_oz=pos_oz,
                 reward_usd=reward_usd, rr_actual=rr_actual,
-                generated_at=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
+                generated_at=_now_cet(),
             )
 
     # Display from session_state (survives auto-reruns from live chart)
@@ -476,7 +488,7 @@ with tab_signal:
                                 title=f"XAUUSD — {s['entry_tf']}")
         st.plotly_chart(fig, use_container_width=True)
         st.caption(
-            f"Last bar: {df.index[-1].strftime('%Y-%m-%d %H:%M UTC')}  |  "
+            f"Last bar: {_ts_cet(df.index[-1])}  |  "
             f"Models: AutoTheta + AutoETS (Sharpe-weighted)  |  Data: yfinance GC=F"
         )
 
@@ -536,7 +548,7 @@ with tab_live:
         with chart_placeholder.container():
             st.plotly_chart(fig_live, use_container_width=True)
             st.caption(
-                f"Last bar: {df_1m.index[-1].strftime('%Y-%m-%d %H:%M:%S UTC')}  |  "
+                f"Last bar: {_ts_cet_sec(df_1m.index[-1])}  |  "
                 f"Next refresh in {live_refresh}s  |  Source: yfinance GC=F"
             )
 
