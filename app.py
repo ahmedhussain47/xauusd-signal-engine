@@ -144,6 +144,88 @@ def run_forecast(df: pd.DataFrame, season: int, freq: str, h: int = 4):
     return theta, ets, W_THETA * theta + W_ETS * ets
 
 
+# ── Supply / Demand zone analysis ────────────────────────────────────────────
+
+def find_swing_zones(df, swing_window=8, tolerance=0.0025):
+    """
+    Identify supply zones (swing highs) and demand zones (swing lows).
+    Returns lists of (zone_bottom, zone_top, timestamp), most recent first.
+    """
+    h, l = df["high"], df["low"]
+    supply, demand = [], []
+    for i in range(swing_window, len(df) - swing_window):
+        hi_val = float(h.iloc[i])
+        lo_val = float(l.iloc[i])
+        if hi_val == float(h.iloc[i - swing_window : i + swing_window + 1].max()):
+            supply.append((round(hi_val * (1 - tolerance), 2), round(hi_val, 2), df.index[i]))
+        if lo_val == float(l.iloc[i - swing_window : i + swing_window + 1].min()):
+            demand.append((round(lo_val, 2), round(lo_val * (1 + tolerance), 2), df.index[i]))
+    return list(reversed(supply[-5:])), list(reversed(demand[-5:]))
+
+
+def compute_zone_analysis(df, cur_px, rsi, adx_val, pdi, ndi):
+    """
+    Score current price in buy/sell zone: -100 (strong sell) to +100 (strong buy).
+    Returns (score, factors_dict, supply_zones, demand_zones).
+    """
+    ema20_val  = float(compute_ema(df["close"], 20).iloc[-1])
+    ema50_val  = float(compute_ema(df["close"], 50).iloc[-1])
+    ema200_val = float(compute_ema(df["close"], 200).iloc[-1])
+    atr_val    = float(compute_atr(df, 14).iloc[-1])
+    supply_zones, demand_zones = find_swing_zones(df)
+
+    score   = 0
+    factors = {}
+
+    # Long-term trend
+    if cur_px > ema200_val:
+        score += 20; factors["Above EMA200 (bull trend)"] = +20
+    else:
+        score -= 20; factors["Below EMA200 (bear trend)"] = -20
+
+    # Medium trend
+    if cur_px > ema50_val:
+        score += 15; factors["Above EMA50"] = +15
+    else:
+        score -= 15; factors["Below EMA50"] = -15
+
+    # Short trend
+    if cur_px > ema20_val:
+        score += 10; factors["Above EMA20"] = +10
+    else:
+        score -= 10; factors["Below EMA20"] = -10
+
+    # RSI zone
+    if rsi < 35:
+        score += 20; factors[f"RSI Oversold ({rsi:.0f})"] = +20
+    elif rsi < 45:
+        score += 10; factors[f"RSI Low ({rsi:.0f})"] = +10
+    elif rsi > 65:
+        score -= 20; factors[f"RSI Overbought ({rsi:.0f})"] = -20
+    elif rsi > 55:
+        score -= 10; factors[f"RSI High ({rsi:.0f})"] = -10
+    else:
+        factors[f"RSI Neutral ({rsi:.0f})"] = 0
+
+    # DI cross
+    if pdi > ndi:
+        score += 15; factors[f"+DI > -DI ({pdi:.0f} > {ndi:.0f})"] = +15
+    else:
+        score -= 15; factors[f"-DI > +DI ({ndi:.0f} > {pdi:.0f})"] = -15
+
+    # Near demand / supply zone (within 1 ATR)
+    near_demand = any(bot - atr_val <= cur_px <= top + atr_val
+                      for bot, top, _ in demand_zones)
+    near_supply = any(bot - atr_val <= cur_px <= top + atr_val
+                      for bot, top, _ in supply_zones)
+    if near_demand:
+        score += 20; factors["Near Demand Zone ✓"] = +20
+    if near_supply:
+        score -= 20; factors["Near Supply Zone ✓"] = -20
+
+    return max(-100, min(100, score)), factors, supply_zones, demand_zones
+
+
 # ── Signal helpers ────────────────────────────────────────────────────────────
 
 def compute_confidence(direction, rsi, adx_val, pdi, ndi, ema20, cur_px, tf_dirs):
@@ -189,7 +271,8 @@ def compute_sl_tp(df, direction, entry, atr14, swing_bars, atr_mult, rr_ratio):
 # ── Chart builder ─────────────────────────────────────────────────────────────
 
 def build_price_chart(df, ema20_s, ema50_s, rsi_s, entry=None, sl=None, tp=None,
-                      title="XAUUSD", lookback=120):
+                      title="XAUUSD", lookback=120,
+                      supply_zones=None, demand_zones=None):
     chart_df = df.tail(lookback)
     ema20_s  = ema20_s.tail(lookback)
     ema50_s  = ema50_s.tail(lookback)
@@ -215,6 +298,19 @@ def build_price_chart(df, ema20_s, ema50_s, rsi_s, entry=None, sl=None, tp=None,
         line=dict(color="#FFA726", width=1.6)), row=1, col=1)
     fig.add_trace(go.Scatter(x=chart_df.index, y=ema50_s, name="EMA50",
         line=dict(color="#7B8CDE", width=1.4)), row=1, col=1)
+
+    # Supply zones (red) and demand zones (green) as shaded bands
+    x0, x1 = chart_df.index[0], chart_df.index[-1]
+    for bot, top, _ in (supply_zones or [])[:3]:
+        fig.add_shape(type="rect", x0=x0, x1=x1, y0=bot, y1=top,
+                      fillcolor="rgba(255,23,68,0.10)",
+                      line=dict(color="rgba(255,23,68,0.35)", width=1),
+                      row=1, col=1)
+    for bot, top, _ in (demand_zones or [])[:3]:
+        fig.add_shape(type="rect", x0=x0, x1=x1, y0=bot, y1=top,
+                      fillcolor="rgba(0,200,83,0.10)",
+                      line=dict(color="rgba(0,200,83,0.35)", width=1),
+                      row=1, col=1)
 
     if entry is not None:
         for level, color, label in [
@@ -351,6 +447,8 @@ with tab_signal:
 
             confidence = compute_confidence(direction, rsi14, adx_val, pdi, ndi,
                                             ema20_v, cur_px, tf_dirs)
+            zone_score, zone_factors, supply_zones, demand_zones = compute_zone_analysis(
+                df, cur_px, rsi14, adx_val, pdi, ndi)
             entry, entry_type = compute_entry(direction, cur_px, ema20_v)
             sl, tp, sl_dist   = compute_sl_tp(df, direction, entry, atr14,
                                                swing_bars, atr_mult, rr_ratio)
@@ -366,6 +464,8 @@ with tab_signal:
                 cur_px=cur_px, atr14=atr14, ema20_v=ema20_v, ema50_v=ema50_v,
                 rsi14=rsi14, adx_val=adx_val, pdi=pdi, ndi=ndi,
                 theta=theta, ets=ets, ens=ens, pred_return=pred_return,
+                zone_score=zone_score, zone_factors=zone_factors,
+                supply_zones=supply_zones, demand_zones=demand_zones,
                 tf_dirs=tf_dirs, entry=entry, sl=sl, tp=tp,
                 sl_dist=sl_dist, risk_usd=risk_usd, pos_oz=pos_oz,
                 reward_usd=reward_usd, rr_actual=rr_actual,
@@ -434,6 +534,48 @@ with tab_signal:
 
         st.divider()
 
+        # ── Zone Analysis ─────────────────────────────────────────────────────
+        zs = s.get("zone_score", 0)
+        if zs >= 30:
+            z_color, z_label, z_icon = "#00C853", "BUYING ZONE", "▲"
+        elif zs <= -30:
+            z_color, z_label, z_icon = "#FF1744", "SELLING ZONE", "▼"
+        else:
+            z_color, z_label, z_icon = "#FFA726", "NEUTRAL — No Clear Zone", "◆"
+
+        st.markdown(
+            f"<div style='background:{z_color}18;border:2px solid {z_color};"
+            f"border-radius:12px;padding:18px 24px;text-align:center;margin:8px 0'>"
+            f"<div style='color:{z_color};font-size:2rem;font-weight:800;letter-spacing:2px'>"
+            f"{z_icon} {z_label}</div>"
+            f"<div style='color:#aaa;margin-top:4px;font-size:0.9rem'>"
+            f"Zone Score: <b style='color:{z_color}'>{zs:+d}</b> / 100 &nbsp;|&nbsp; "
+            f"{'Strong' if abs(zs) >= 60 else 'Moderate' if abs(zs) >= 30 else 'Weak'} conviction"
+            f"</div></div>",
+            unsafe_allow_html=True,
+        )
+
+        # Score bar
+        bar_pct = (zs + 100) / 200   # 0.0 = full sell, 0.5 = neutral, 1.0 = full buy
+        st.progress(bar_pct, text=f"← Sell Zone  |  Score: {zs:+d}  |  Buy Zone →")
+
+        # Factor breakdown
+        with st.expander("Zone factor breakdown", expanded=False):
+            zf_rows = [{"Factor": k, "Points": f"{v:+d}"} for k, v in s.get("zone_factors", {}).items()]
+            st.dataframe(pd.DataFrame(zf_rows), use_container_width=True, hide_index=True)
+
+            sup = s.get("supply_zones", [])
+            dem = s.get("demand_zones", [])
+            if sup or dem:
+                zone_rows = []
+                for bot, top, ts in sup[:3]:
+                    zone_rows.append({"Type": "🔴 Supply", "Bottom": f"${bot:,.2f}", "Top": f"${top:,.2f}", "Formed": str(ts)[:16]})
+                for bot, top, ts in dem[:3]:
+                    zone_rows.append({"Type": "🟢 Demand", "Bottom": f"${bot:,.2f}", "Top": f"${top:,.2f}", "Formed": str(ts)[:16]})
+                st.dataframe(pd.DataFrame(zone_rows), use_container_width=True, hide_index=True)
+
+        st.divider()
+
         left, right = st.columns(2)
         with left:
             st.subheader("Ensemble Forecast")
@@ -485,7 +627,9 @@ with tab_signal:
         rsi_s    = compute_rsi(df["close"], 14)
         fig = build_price_chart(df, ema20_s, ema50_s, rsi_s,
                                 entry=s["entry"], sl=s["sl"], tp=s["tp"],
-                                title=f"XAUUSD — {s['entry_tf']}")
+                                title=f"XAUUSD — {s['entry_tf']}",
+                                supply_zones=s.get("supply_zones"),
+                                demand_zones=s.get("demand_zones"))
         st.plotly_chart(fig, use_container_width=True)
         st.caption(
             f"Last bar: {_ts_cet(df.index[-1])}  |  "
