@@ -156,7 +156,8 @@ def pivot_levels(df: pd.DataFrame, lookback: int = 20) -> Dict[str, float]:
     """
     Dynamic support/resistance using rolling high/low pivots.
 
-    Returns the nearest resistance above and support below the last close.
+    Returns the nearest resistance above and support below the last close,
+    plus Fibonacci retracement levels between the lookback period high/low.
     """
     close = float(df["close"].iloc[-1])
     window = df.tail(lookback * 2)
@@ -182,10 +183,23 @@ def pivot_levels(df: pd.DataFrame, lookback: int = 20) -> Dict[str, float]:
     )
 
     atr_val = float(atr(df, 14).iloc[-1])
-    return {
+    result: Dict[str, float] = {
         "resistance": pivot_highs[0] if pivot_highs else close + atr_val * 2.0,
         "support":    pivot_lows[0]  if pivot_lows  else close - atr_val * 2.0,
     }
+
+    # Fibonacci retracement levels (0.236, 0.382, 0.5, 0.618, 0.786)
+    period_high = float(window["high"].max())
+    period_low  = float(window["low"].min())
+    fib_range   = period_high - period_low
+    if fib_range > 0:
+        for ratio, name in [
+            (0.236, "fib_236"), (0.382, "fib_382"), (0.500, "fib_500"),
+            (0.618, "fib_618"), (0.786, "fib_786"),
+        ]:
+            result[name] = round(period_high - ratio * fib_range, 5)
+
+    return result
 
 
 # ── Full feature matrix ────────────────────────────────────────────────────────

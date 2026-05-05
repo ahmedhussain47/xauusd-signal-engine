@@ -43,7 +43,7 @@ from typing import Callable, Dict, List, Optional
 import numpy as np
 import pandas as pd
 
-from .feature_engineering import atr, build_multi_tf_snapshot, pivot_levels
+from .feature_engineering import atr, build_multi_tf_snapshot, pivot_levels, rsi as _rsi_fn
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +75,68 @@ SIGNAL_TTL: Dict[str, timedelta] = {
 
 # Canonical timeframe order (low → high resolution).
 TF_ORDER = ["1min", "5min", "15min", "30min", "1H", "4H", "1D"]
+
+# Forex assets identified by suffix (yfinance convention).
+_FOREX_SUFFIXES = ("=X",)
+
+# UTC hour ranges [start, end) for each major trading session.
+_SESSION_HOURS = {
+    "asian":    (0,  7),
+    "london":   (7,  16),
+    "new_york": (12, 21),
+}
+
+
+def _session_liquidity_multiplier(asset: str, now: Optional[datetime] = None) -> float:
+    """
+    Returns a confidence multiplier (0.7–1.0) for forex assets during
+    low-liquidity sessions.  Non-forex assets always return 1.0.
+    """
+    if not any(asset.endswith(s) for s in _FOREX_SUFFIXES):
+        return 1.0
+    if now is None:
+        now = datetime.now(timezone.utc)
+    hour = now.hour
+    # Only London / New York (or overlap) are high-liquidity for major pairs.
+    in_london   = _SESSION_HOURS["london"][0]   <= hour < _SESSION_HOURS["london"][1]
+    in_new_york = _SESSION_HOURS["new_york"][0] <= hour < _SESSION_HOURS["new_york"][1]
+    if not (in_london or in_new_york):
+        return 0.70   # Asian session: dampen forex signals
+    return 1.0
+
+
+def _detect_rsi_divergence(df: pd.DataFrame, lookback: int = 20) -> int:
+    """
+    Detect RSI divergence over the most-recent `lookback` bars.
+
+    Returns:
+        +1  bullish divergence (price lower low, RSI higher low)
+        -1  bearish divergence (price higher high, RSI lower high)
+         0  no clear divergence
+    """
+    if len(df) < lookback + 14:
+        return 0
+    try:
+        recent    = df.tail(lookback)
+        close     = recent["close"]
+        rsi_vals  = _rsi_fn(df["close"], 14).reindex(recent.index)
+        half      = lookback // 2
+
+        first_close, second_close = close.iloc[:half], close.iloc[half:]
+        first_rsi,   second_rsi   = rsi_vals.iloc[:half], rsi_vals.iloc[half:]
+
+        # Bullish divergence: lower price low, higher RSI low
+        if (second_close.min() < first_close.min() and
+                second_rsi.min() > first_rsi.min()):
+            return +1
+
+        # Bearish divergence: higher price high, lower RSI high
+        if (second_close.max() > first_close.max() and
+                second_rsi.max() < first_rsi.max()):
+            return -1
+    except Exception:
+        pass
+    return 0
 
 
 # ── Signal dataclass ───────────────────────────────────────────────────────────
@@ -204,6 +266,20 @@ def _score_timeframe(snap: pd.Series) -> Dict:
         elif k < 50 and k < d:
             _vote(-0.5, 0.4, f"stoch_bear({k:.0f})")
     except KeyError:
+        pass
+
+    # ── Volume confirmation ────────────────────────────────────────────────
+    # A volume spike in the direction of the bar's last-bar return confirms
+    # momentum; low volume suggests weak conviction.
+    try:
+        vol_ratio = float(snap.get("volume_ratio", 1.0))
+        ret_1     = float(snap.get("ret_1", 0.0))
+        if vol_ratio > 1.5 and ret_1 != 0.0:
+            # Spike confirms the bar's direction
+            _vote(+0.6 if ret_1 > 0 else -0.6, 0.5, f"vol_confirm({vol_ratio:.1f}x)")
+        elif vol_ratio < 0.5:
+            _vote(0.0, 0.25, f"vol_weak({vol_ratio:.1f}x)")
+    except (KeyError, TypeError):
         pass
 
     if total == 0.0:
@@ -366,6 +442,9 @@ class SignalEngine:
         if not self.timeframes:
             self.timeframes = raw_tfs   # Keep as-is if none matched
 
+        # Cooldown: suppress repeated signals within one TTL window.
+        self._last_signal_ts: Optional[datetime] = None
+
     # ── Properties ─────────────────────────────────────────────────────────────
 
     @property
@@ -391,6 +470,8 @@ class SignalEngine:
         Returns:
             Signal if all conditions are met, None otherwise.
         """
+        now = datetime.now(timezone.utc)
+
         # 1. Compute feature snapshots for each available timeframe
         snapshots = build_multi_tf_snapshot(
             {tf: df for tf, df in tf_data.items() if tf in self.timeframes}
@@ -400,6 +481,16 @@ class SignalEngine:
             return None
 
         available_tfs = [tf for tf in self.timeframes if tf in snapshots]
+
+        # Volatility regime filter — skip dormant or panic markets
+        entry_snap_early = snapshots.get(self.entry_tf, snapshots[available_tfs[0]])
+        vol_regime = float(entry_snap_early.get("vol_regime", 1.0))
+        if vol_regime > 3.0:
+            logger.debug("%s: extreme volatility (vol_regime=%.1f) — no signal", self.asset, vol_regime)
+            return None
+        if vol_regime < 0.2:
+            logger.debug("%s: market dormant (vol_regime=%.1f) — no signal", self.asset, vol_regime)
+            return None
 
         # 2. Score every timeframe
         tf_scores = {tf: _score_timeframe(snap) for tf, snap in snapshots.items()}
@@ -459,10 +550,33 @@ class SignalEngine:
         )
         if macro_neutral:
             confidence = min(confidence, 70)     # Cap when macro is unclear
+
+        # RSI divergence bonus / penalty
+        entry_df_raw = tf_data.get(self.entry_tf, next(iter(tf_data.values())))
+        divergence = _detect_rsi_divergence(entry_df_raw)
+        if divergence == final_direction:
+            confidence = min(99, confidence + 8)
+        elif divergence != 0:
+            confidence = max(0, confidence - 5)
+
+        # Market session multiplier (dampens forex during Asian session)
+        session_mult = _session_liquidity_multiplier(self.asset, now)
+        if session_mult < 1.0:
+            confidence = int(confidence * session_mult)
+
         if confidence < self.confidence_threshold:
             logger.debug(
                 "%s: confidence %d < threshold %d",
                 self.asset, confidence, self.confidence_threshold,
+            )
+            return None
+
+        # Cooldown: suppress signal if we emitted one within the last TTL window
+        cooldown = SIGNAL_TTL.get(self.entry_tf, timedelta(hours=2))
+        if self._last_signal_ts is not None and (now - self._last_signal_ts) < cooldown:
+            logger.debug(
+                "%s: cooldown active (%s remaining)",
+                self.asset, cooldown - (now - self._last_signal_ts),
             )
             return None
 
@@ -471,9 +585,22 @@ class SignalEngine:
         entry_price = float(entry_snap["close"])
         atr_val     = float(entry_snap.get("atr_14", entry_price * 0.005))
 
-        # 8. Support / resistance from the entry timeframe price data
+        # 8. Support / resistance + Fibonacci levels from entry timeframe data
         entry_df = tf_data.get(self.entry_tf, next(iter(tf_data.values())))
         pivots   = pivot_levels(entry_df, lookback=20)
+
+        # Tighten S/R using nearest Fibonacci level when it lies between
+        # the price and the classic pivot (avoids over-wide SL/TP).
+        fib_vals = [v for k, v in pivots.items() if k.startswith("fib_")]
+        if fib_vals:
+            if direction_str == "BUY":
+                fib_sup = max((f for f in fib_vals if f < entry_price), default=None)
+                if fib_sup is not None and fib_sup > pivots["support"]:
+                    pivots["support"] = fib_sup
+            else:
+                fib_res = min((f for f in fib_vals if f > entry_price), default=None)
+                if fib_res is not None and fib_res < pivots["resistance"]:
+                    pivots["resistance"] = fib_res
 
         # 9. TP / SL
         # Hard-cap SL distance by TF so distant S/R pivots never inflate risk.
@@ -491,7 +618,6 @@ class SignalEngine:
         )
 
         # 10. Validity window
-        now         = datetime.now(timezone.utc)
         valid_until = now + SIGNAL_TTL.get(self.entry_tf, timedelta(hours=2))
 
         signal = Signal(
@@ -520,6 +646,7 @@ class SignalEngine:
             ),
         )
 
+        self._last_signal_ts = now
         logger.info("Signal generated: %s", signal)
         return signal
 

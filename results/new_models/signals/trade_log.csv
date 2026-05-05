@@ -1,0 +1,2 @@
+timestamp,asset,timeframe,signal,model,entry,sl,tp,exit_price,pts_gained,pct_move,position_oz,pnl_usd,pnl_pct_acc,r_achieved,outcome,direction_ok
+2026-05-04 08:47 UTC,GC=F (XAUUSD),15min,SELL,AutoTheta + AutoETS ensemble,4584.703,4597.516,4559.078,4546.006,38.697,0.844,0.7805,30.2,3.0202,3.02,TP,True

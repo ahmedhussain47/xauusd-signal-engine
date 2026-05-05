@@ -1,0 +1,63 @@
+{
+  "_comment": "Edit this file to change any trading parameter. Re-run Section 2 of the notebook to apply.",
+
+  "assets": ["XAUUSD"],
+
+  "tf_auto_stack": {
+    "_comment": "When you pick an ENTRY_TF, these are the confirmation+bias TFs added above it automatically.",
+    "1min":  ["1min",  "15min", "1H",  "4H"],
+    "5min":  ["5min",  "15min", "1H",  "4H"],
+    "15min": ["15min", "1H",    "4H"],
+    "30min": ["30min", "1H",    "4H",  "1D"],
+    "1H":    ["1H",    "4H",    "1D"],
+    "4H":    ["4H",    "1D"],
+    "1D":    ["1D"]
+  },
+
+  "confidence_threshold": {
+    "_comment": "Minimum % confidence to emit a signal. Lower = more signals, less reliable.",
+    "XAUUSD": 65,
+    "EURUSD": 65,
+    "GBPUSD": 65,
+    "USDJPY": 65,
+    "default": 65
+  },
+
+  "rr_ratio": {
+    "_comment": "Risk-reward ratio. 2.0 means TP is twice as far as SL.",
+    "XAUUSD": 2.0,
+    "default": 2.0
+  },
+
+  "atr_sl_mult": {
+    "_comment": "SL = entry +/- ATR x this value. Lower = tighter stop.",
+    "XAUUSD": 1.0,
+    "default": 1.0
+  },
+
+  "scan_interval_seconds": {
+    "_comment": "How often the live monitor fetches new data (60 = every minute).",
+    "value": 60
+  },
+
+  "live": {
+    "_comment": "Set to true to start the live scanner, false to stop it.",
+    "XAUUSD": false,
+    "all_assets": false
+  },
+
+  "backtest": {
+    "_comment": "Settings used when running scan_history.",
+    "min_confidence": 50,
+    "step_bars": 3,
+    "max_bars_to_hold": 240,
+    "slippage_pct": 0.0002,
+    "commission_pct": 0.0001
+  },
+
+  "account": {
+    "balance": 200,
+    "max_risk_pct": 0.01,
+    "max_drawdown_pct": 0.10
+  }
+}
