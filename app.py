@@ -1,7 +1,7 @@
 """
 Gold Trade Planner — Streamlit Web App
-3-model ensemble (AutoTheta + AutoETS + Chronos weights), multi-timeframe
-alignment, full risk management, live 1-min gold chart.
+3-model ensemble (AutoTheta + AutoETS), multi-timeframe alignment, risk management,
+live 1-min gold chart with auto-refresh.
 """
 
 import time
@@ -21,83 +21,16 @@ from datetime import datetime, timezone
 # ── Page config ──────────────────────────────────────────────────────────────
 st.set_page_config(
     page_title="Gold Trade Planner",
-    page_icon="⬡",
+    page_icon="📊",
     layout="wide",
     initial_sidebar_state="expanded",
 )
-
-# ── Gold theme CSS ────────────────────────────────────────────────────────────
-st.markdown("""
-<style>
-/* ── Background ── */
-.stApp { background: #09090f; color: #e8e8e8; }
-[data-testid="stSidebar"] {
-    background: #0f0f1a;
-    border-right: 1px solid #2a2517;
-}
-
-/* ── Gold accent headings ── */
-h1 { color: #D4AF37 !important; letter-spacing: 1px; }
-h2, h3 { color: #c9a227 !important; }
-
-/* ── Metric cards ── */
-[data-testid="stMetric"] {
-    background: #13131f;
-    border: 1px solid #2a2a40;
-    border-radius: 10px;
-    padding: 14px 16px;
-}
-[data-testid="stMetricLabel"]  { color: #888 !important; font-size: 0.78rem; }
-[data-testid="stMetricValue"]  { color: #e8e8e8 !important; }
-[data-testid="stMetricDelta"]  { font-size: 0.78rem; }
-
-/* ── Primary button → gold gradient ── */
-.stButton > button[kind="primary"] {
-    background: linear-gradient(135deg, #b8860b 0%, #D4AF37 50%, #f0c040 100%);
-    color: #09090f;
-    font-weight: 700;
-    border: none;
-    border-radius: 8px;
-    letter-spacing: 0.5px;
-}
-.stButton > button[kind="primary"]:hover {
-    background: linear-gradient(135deg, #D4AF37 0%, #f5d54d 100%);
-    box-shadow: 0 0 18px rgba(212,175,55,0.45);
-}
-
-/* ── Secondary buttons ── */
-.stButton > button:not([kind="primary"]) {
-    background: #1a1a2e;
-    color: #D4AF37;
-    border: 1px solid #D4AF37;
-    border-radius: 8px;
-}
-
-/* ── Tabs ── */
-.stTabs [data-baseweb="tab-list"] { border-bottom: 1px solid #2a2a40; }
-.stTabs [data-baseweb="tab"]      { color: #666; }
-.stTabs [aria-selected="true"]    { color: #D4AF37 !important; border-bottom: 2px solid #D4AF37 !important; }
-
-/* ── Dividers ── */
-hr { border-color: #2a2a40; }
-
-/* ── Info / warning / error ── */
-[data-testid="stAlert"] { border-radius: 8px; }
-
-/* ── Tables / dataframes ── */
-[data-testid="stDataFrame"] th { color: #D4AF37; background: #13131f; }
-
-/* ── Sidebar sliders ── */
-[data-testid="stSlider"] > div > div > div > div { background: #D4AF37; }
-</style>
-""", unsafe_allow_html=True)
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 TICKER     = "GC=F"
 TRAIN_BARS = 200
 
-# Benchmark walk-forward Sharpe weights (H=1)
-_W = {"AutoTheta": 0.771, "AutoETS": 0.162}
+_W  = {"AutoTheta": 0.771, "AutoETS": 0.162}
 _WS = sum(_W.values())
 W_THETA, W_ETS = _W["AutoTheta"] / _WS, _W["AutoETS"] / _WS
 
@@ -110,12 +43,11 @@ TIMEFRAMES = {
     "Daily":  {"interval": "1d",  "period": "2y",  "season": 5,   "freq": "D"},
 }
 
-# Plotly layout shared across all charts
 _CHART_BASE = dict(
     template="plotly_dark",
-    paper_bgcolor="#09090f",
-    plot_bgcolor="#09090f",
-    font=dict(color="#e8e8e8", family="Inter, sans-serif"),
+    paper_bgcolor="rgba(0,0,0,0)",
+    plot_bgcolor="rgba(0,0,0,0)",
+    font=dict(family="Inter, sans-serif"),
     xaxis_rangeslider_visible=False,
     legend=dict(orientation="h", y=1.02, bgcolor="rgba(0,0,0,0)"),
     margin=dict(l=0, r=130, t=30, b=0),
@@ -163,8 +95,7 @@ def compute_adx(df, period=14):
 
 @st.cache_data(ttl=60, show_spinner=False)
 def fetch_data(interval: str, period: str, resample: str | None = None) -> pd.DataFrame:
-    ticker = yf.Ticker(TICKER)
-    df = ticker.history(interval=interval, period=period)
+    df = yf.Ticker(TICKER).history(interval=interval, period=period)
     if df.empty:
         raise ValueError(f"yfinance returned no data (interval={interval})")
     df.columns = [c.lower() for c in df.columns]
@@ -198,22 +129,21 @@ def run_forecast(df: pd.DataFrame, season: int, freq: str, h: int = 4):
     ).forecast(df=sf_df, h=h)
     theta = preds["AutoTheta"].values
     ets   = preds["AutoETS"].values
-    ens   = W_THETA * theta + W_ETS * ets
-    return theta, ets, ens
+    return theta, ets, W_THETA * theta + W_ETS * ets
 
 
-# ── Signal logic ──────────────────────────────────────────────────────────────
+# ── Signal helpers ────────────────────────────────────────────────────────────
 
 def compute_confidence(direction, rsi, adx_val, pdi, ndi, ema20, cur_px, tf_dirs):
     score = 50
-    if adx_val > 25:    score += 10
-    elif adx_val > 20:  score += 5
-    if direction == "BUY"  and pdi > ndi: score += 10
-    if direction == "SELL" and ndi > pdi: score += 10
-    if direction == "BUY"  and 40 < rsi < 65: score += 8
-    if direction == "SELL" and 35 < rsi < 60: score += 8
-    if direction == "SELL" and cur_px < ema20: score += 7
-    if direction == "BUY"  and cur_px > ema20: score += 7
+    if adx_val > 25:   score += 10
+    elif adx_val > 20: score += 5
+    if direction == "BUY"  and pdi > ndi:        score += 10
+    if direction == "SELL" and ndi > pdi:        score += 10
+    if direction == "BUY"  and 40 < rsi < 65:   score += 8
+    if direction == "SELL" and 35 < rsi < 60:   score += 8
+    if direction == "SELL" and cur_px < ema20:   score += 7
+    if direction == "BUY"  and cur_px > ema20:   score += 7
     aligned = sum(1 for d in tf_dirs.values() if d == direction)
     score  += int((aligned / max(len(tf_dirs), 1)) * 15)
     return min(max(score, 0), 100)
@@ -244,7 +174,7 @@ def compute_sl_tp(df, direction, entry, atr14, swing_bars, atr_mult, rr_ratio):
     return sl, tp, abs(sl_dist)
 
 
-# ── Chart builder (reused by both tabs) ──────────────────────────────────────
+# ── Chart builder ─────────────────────────────────────────────────────────────
 
 def build_price_chart(df, ema20_s, ema50_s, rsi_s, entry=None, sl=None, tp=None,
                       title="XAUUSD", lookback=120):
@@ -260,7 +190,6 @@ def build_price_chart(df, ema20_s, ema50_s, rsi_s, entry=None, sl=None, tp=None,
         subplot_titles=[title, "RSI(14)", "Volume"],
     )
 
-    # Candlesticks
     fig.add_trace(go.Candlestick(
         x=chart_df.index,
         open=chart_df["open"], high=chart_df["high"],
@@ -271,16 +200,15 @@ def build_price_chart(df, ema20_s, ema50_s, rsi_s, entry=None, sl=None, tp=None,
     ), row=1, col=1)
 
     fig.add_trace(go.Scatter(x=chart_df.index, y=ema20_s, name="EMA20",
-        line=dict(color="#D4AF37", width=1.6)), row=1, col=1)
+        line=dict(color="#FFA726", width=1.6)), row=1, col=1)
     fig.add_trace(go.Scatter(x=chart_df.index, y=ema50_s, name="EMA50",
         line=dict(color="#7B8CDE", width=1.4)), row=1, col=1)
 
-    # Signal levels
     if entry is not None:
         for level, color, label in [
-            (entry, "#D4AF37",  f"Entry  ${entry:,.2f}"),
-            (sl,    "#FF1744",  f"SL      ${sl:,.2f}"),
-            (tp,    "#00C853",  f"TP      ${tp:,.2f}"),
+            (entry, "#FFA726", f"Entry  ${entry:,.2f}"),
+            (sl,    "#FF1744", f"SL      ${sl:,.2f}"),
+            (tp,    "#00C853", f"TP      ${tp:,.2f}"),
         ]:
             fig.add_shape(type="line",
                           x0=chart_df.index[0], x1=chart_df.index[-1],
@@ -291,7 +219,6 @@ def build_price_chart(df, ema20_s, ema50_s, rsi_s, entry=None, sl=None, tp=None,
                                text=f" {label}", xanchor="left", showarrow=False,
                                font=dict(color=color, size=11), row=1, col=1)
 
-    # RSI
     rsi_arr = rsi_s.values
     fig.add_trace(go.Scatter(x=chart_df.index, y=rsi_arr, name="RSI",
         line=dict(color="#CE93D8", width=1.5)), row=2, col=1)
@@ -310,26 +237,23 @@ def build_price_chart(df, ema20_s, ema50_s, rsi_s, entry=None, sl=None, tp=None,
     for lvl, clr in [(70, "#FF1744"), (30, "#00C853"), (50, "#444")]:
         fig.add_hline(y=lvl, line=dict(color=clr, dash="dot", width=1), row=2, col=1)
 
-    # Volume
     vol_colors = ["#00C853" if c >= o else "#FF1744"
                   for c, o in zip(chart_df["close"], chart_df["open"])]
     fig.add_trace(go.Bar(x=chart_df.index, y=chart_df["volume"],
         name="Volume", marker_color=vol_colors, opacity=0.6), row=3, col=1)
 
     fig.update_layout(height=720, **_CHART_BASE)
-    fig.update_yaxes(title_text="Price (USD)", row=1, col=1,
-                     gridcolor="#1a1a2e", zerolinecolor="#2a2a40")
-    fig.update_yaxes(title_text="RSI", row=2, col=1, range=[0, 100],
-                     gridcolor="#1a1a2e")
-    fig.update_yaxes(title_text="Vol", row=3, col=1, gridcolor="#1a1a2e")
-    fig.update_xaxes(gridcolor="#1a1a2e", showgrid=False)
+    fig.update_yaxes(title_text="Price (USD)", row=1, col=1, gridcolor="#333")
+    fig.update_yaxes(title_text="RSI", row=2, col=1, range=[0, 100], gridcolor="#333")
+    fig.update_yaxes(title_text="Vol",  row=3, col=1, gridcolor="#333")
+    fig.update_xaxes(gridcolor="#333", showgrid=False)
     return fig
 
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 
 with st.sidebar:
-    st.markdown("## ⬡ Settings")
+    st.markdown("## Settings")
     entry_tf   = st.selectbox("Entry Timeframe", list(TIMEFRAMES.keys()), index=2)
     st.divider()
     st.markdown("**Risk Management**")
@@ -347,7 +271,7 @@ with st.sidebar:
 
 # ── Page header ───────────────────────────────────────────────────────────────
 
-st.markdown("# ⬡ Gold Trade Planner")
+st.title("Gold Trade Planner")
 st.markdown(
     "**Developed by Ahmed R. Hussain** &nbsp;|&nbsp; "
     "*Beta — For research purposes only. Not financial advice.*"
@@ -369,7 +293,63 @@ with tab_signal:
 
     generate = st.button("⚡ Generate Signal", type="primary", use_container_width=True)
 
-    if not generate:
+    # Compute and store in session_state when button clicked
+    if generate:
+        with st.spinner("Fetching live Gold data and running models..."):
+            cfg = TIMEFRAMES[entry_tf]
+            try:
+                df = fetch_data(cfg["interval"], cfg["period"], cfg.get("resample"))
+            except Exception as e:
+                st.error(f"Failed to fetch Gold data: {e}")
+                st.stop()
+
+            cur_px  = float(df["close"].iloc[-1])
+            atr14   = float(compute_atr(df, 14).iloc[-1])
+            ema20_v = float(compute_ema(df["close"], 20).iloc[-1])
+            ema50_v = float(compute_ema(df["close"], 50).iloc[-1])
+            rsi14   = float(compute_rsi(df["close"], 14).iloc[-1])
+            adx_val, pdi, ndi = compute_adx(df, 14)
+
+            theta, ets, ens = run_forecast(df, cfg["season"], cfg["freq"], h=4)
+            direction = "SELL" if ens[0] < 0 else "BUY"
+
+            sweep_tfs = {k: v for k, v in TIMEFRAMES.items() if k != "1 min"}
+            tf_dirs, tf_returns = {}, {}
+            for tf_name, tcfg in sweep_tfs.items():
+                try:
+                    df_tf = fetch_data(tcfg["interval"], tcfg["period"], tcfg.get("resample"))
+                    _, _, e = run_forecast(df_tf, tcfg["season"], tcfg["freq"], h=1)
+                    tf_dirs[tf_name]    = "SELL" if e[0] < 0 else "BUY"
+                    tf_returns[tf_name] = float(e[0])
+                except Exception:
+                    tf_dirs[tf_name]    = "?"
+                    tf_returns[tf_name] = 0.0
+
+            confidence = compute_confidence(direction, rsi14, adx_val, pdi, ndi,
+                                            ema20_v, cur_px, tf_dirs)
+            entry, entry_type = compute_entry(direction, cur_px, ema20_v)
+            sl, tp, sl_dist   = compute_sl_tp(df, direction, entry, atr14,
+                                               swing_bars, atr_mult, rr_ratio)
+            risk_usd   = account * risk_pct
+            pos_oz     = round(risk_usd / sl_dist, 4) if sl_dist > 0 else 0
+            reward_usd = round(pos_oz * sl_dist * rr_ratio, 2)
+            rr_actual  = abs(tp - entry) / sl_dist if sl_dist > 0 else 0
+
+            # Store everything in session_state so reruns don't wipe it
+            st.session_state.signal_data = dict(
+                df=df, direction=direction, entry_tf=entry_tf,
+                entry_type=entry_type, confidence=confidence,
+                cur_px=cur_px, atr14=atr14, ema20_v=ema20_v, ema50_v=ema50_v,
+                rsi14=rsi14, adx_val=adx_val, pdi=pdi, ndi=ndi,
+                theta=theta, ets=ets, ens=ens,
+                tf_dirs=tf_dirs, entry=entry, sl=sl, tp=tp,
+                sl_dist=sl_dist, risk_usd=risk_usd, pos_oz=pos_oz,
+                reward_usd=reward_usd, rr_actual=rr_actual,
+                generated_at=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
+            )
+
+    # Display from session_state (survives auto-reruns from live chart)
+    if "signal_data" not in st.session_state:
         st.info("Configure settings in the sidebar, then click **Generate Signal**.")
         st.markdown("""
 **How it works:**
@@ -379,155 +359,110 @@ with tab_signal:
 4. Calculates Entry (limit or market), Stop Loss (ATR + swing), Take Profit
 5. Sizes position using fixed-fractional risk management
         """)
-        st.stop()
-
-    with st.spinner("Fetching live Gold data and running models..."):
-        cfg = TIMEFRAMES[entry_tf]
-        try:
-            df = fetch_data(cfg["interval"], cfg["period"], cfg.get("resample"))
-        except Exception as e:
-            st.error(f"Failed to fetch Gold data: {e}")
-            st.stop()
-
-        cur_px  = float(df["close"].iloc[-1])
-        atr14   = float(compute_atr(df, 14).iloc[-1])
-        ema20_v = float(compute_ema(df["close"], 20).iloc[-1])
-        ema50_v = float(compute_ema(df["close"], 50).iloc[-1])
-        rsi14   = float(compute_rsi(df["close"], 14).iloc[-1])
-        adx_val, pdi, ndi = compute_adx(df, 14)
-
-        theta, ets, ens = run_forecast(df, cfg["season"], cfg["freq"], h=4)
-        direction = "SELL" if ens[0] < 0 else "BUY"
-        arrow     = "▼" if direction == "SELL" else "▲"
-
-        # Multi-TF sweep (skip 1min for speed in signal generation)
-        sweep_tfs = {k: v for k, v in TIMEFRAMES.items() if k != "1 min"}
-        tf_dirs, tf_returns = {}, {}
-        for tf_name, tcfg in sweep_tfs.items():
-            try:
-                df_tf = fetch_data(tcfg["interval"], tcfg["period"], tcfg.get("resample"))
-                _, _, e = run_forecast(df_tf, tcfg["season"], tcfg["freq"], h=1)
-                tf_dirs[tf_name]    = "SELL" if e[0] < 0 else "BUY"
-                tf_returns[tf_name] = float(e[0])
-            except Exception:
-                tf_dirs[tf_name]    = "?"
-                tf_returns[tf_name] = 0.0
-
-        confidence = compute_confidence(direction, rsi14, adx_val, pdi, ndi,
-                                        ema20_v, cur_px, tf_dirs)
-        entry, entry_type = compute_entry(direction, cur_px, ema20_v)
-        sl, tp, sl_dist   = compute_sl_tp(df, direction, entry, atr14,
-                                           swing_bars, atr_mult, rr_ratio)
-        risk_usd   = account * risk_pct
-        pos_oz     = round(risk_usd / sl_dist, 4) if sl_dist > 0 else 0
-        reward_usd = round(pos_oz * sl_dist * rr_ratio, 2)
-        rr_actual  = abs(tp - entry) / sl_dist if sl_dist > 0 else 0
-
-    # ── Signal header ─────────────────────────────────────────────────────────
-    col_sig, col_conf, col_px, col_tf = st.columns([3, 1, 1, 1])
-    with col_sig:
-        sig_color = "#00C853" if direction == "BUY" else "#FF1744"
-        st.markdown(
-            f"<h2 style='color:{sig_color};margin:0'>{arrow} {direction} &nbsp; XAUUSD [{entry_tf}]</h2>",
-            unsafe_allow_html=True,
-        )
-        st.caption(entry_type)
-    with col_conf:
-        st.metric("Confidence", f"{confidence}%")
-    with col_px:
-        st.metric("Gold Price", f"${cur_px:,.2f}")
-    with col_tf:
-        aligned = sum(1 for d in tf_dirs.values() if d == direction)
-        st.metric("TF Aligned", f"{aligned}/{len(tf_dirs)}")
-
-    st.divider()
-
-    # Market context
-    c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("ATR(14)",  f"${atr14:.2f}")
-    c2.metric("RSI(14)",  f"{rsi14:.1f}")
-    c3.metric("ADX(14)",  f"{adx_val:.1f}", delta="Trending" if adx_val > 25 else "Ranging")
-    c4.metric("EMA20",    f"${ema20_v:,.2f}", delta="Above" if cur_px > ema20_v else "Below")
-    c5.metric("EMA50",    f"${ema50_v:,.2f}", delta="Above" if cur_px > ema50_v else "Below")
-
-    st.divider()
-
-    # Multi-TF alignment
-    st.subheader("Multi-Timeframe Alignment")
-    tf_cols = st.columns(len(tf_dirs))
-    for i, (tf_name, d) in enumerate(tf_dirs.items()):
-        with tf_cols[i]:
-            icon  = "▲" if d == "BUY" else ("▼" if d == "SELL" else "?")
-            match = d == direction
-            st.metric(
-                tf_name, f"{icon} {d}",
-                delta="Aligned" if match else "Conflict",
-                delta_color="normal" if match else "inverse",
-            )
-
-    st.divider()
-
-    # Forecast table + Trade plan
-    left, right = st.columns(2)
-
-    with left:
-        st.subheader("Ensemble Forecast")
-        rows = []
-        for h in [1, 2, 4]:
-            cum_ens = float(np.cumsum(ens)[h - 1])
-            rows.append({
-                "Horizon":      f"+{h} bar{'s' if h > 1 else ''}",
-                "AutoTheta":    f"{np.cumsum(theta)[h-1]*100:+.4f}%",
-                "AutoETS":      f"{np.cumsum(ets)[h-1]*100:+.4f}%",
-                "Ensemble":     f"{cum_ens*100:+.4f}%",
-                "Price Target": f"${cur_px * np.exp(cum_ens):,.2f}",
-                "Direction":    "▲ UP" if cum_ens > 0 else "▼ DOWN",
-            })
-        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
-
-    with right:
-        st.subheader("Trade Plan")
-        plan_df = pd.DataFrame([
-            {"Field": "Direction",     "Value": f"{arrow} {direction}"},
-            {"Field": "Entry",         "Value": f"${entry:,.3f}"},
-            {"Field": "Stop Loss",     "Value": f"${sl:,.3f}  ({sl_dist:.2f} pts = {atr_mult}x ATR)"},
-            {"Field": "Take Profit",   "Value": f"${tp:,.3f}  ({abs(tp-entry):.2f} pts)"},
-            {"Field": "R:R",           "Value": f"1:{rr_actual:.2f}"},
-            {"Field": "Position Size", "Value": f"{pos_oz:.4f} oz"},
-            {"Field": "Risk $",        "Value": f"${risk_usd:.2f}  ({risk_pct:.1%})"},
-            {"Field": "Max Gain",      "Value": f"${reward_usd:.2f}"},
-        ])
-        st.dataframe(plan_df, use_container_width=True, hide_index=True)
-
-    # Alert
-    st.divider()
-    if confidence >= 70:
-        st.success(f"Strong signal — {confidence}% confidence. Key factors aligned.")
-    elif confidence >= 55:
-        st.warning(f"Moderate signal — {confidence}% confidence. Consider 50% position size.")
     else:
-        st.error(f"Weak signal — {confidence}%. Timeframes conflicting. Best to skip.")
+        s = st.session_state.signal_data
+        direction  = s["direction"]
+        arrow      = "▼" if direction == "SELL" else "▲"
+        sig_color  = "green" if direction == "BUY" else "red"
 
-    if direction == "SELL" and rsi14 < 35:
-        st.warning("RSI oversold — counter-trend SELL. Higher reversal risk.")
-    elif direction == "BUY" and rsi14 > 65:
-        st.warning("RSI overbought — counter-trend BUY. Higher reversal risk.")
+        st.caption(f"Generated at {s['generated_at']}  |  Click Generate Signal to refresh.")
 
-    st.divider()
+        col_sig, col_conf, col_px, col_tf = st.columns([3, 1, 1, 1])
+        with col_sig:
+            st.markdown(
+                f"<h2 style='color:{'#00C853' if direction=='BUY' else '#FF1744'};margin:0'>"
+                f"{arrow} {direction} &nbsp; XAUUSD [{s['entry_tf']}]</h2>",
+                unsafe_allow_html=True,
+            )
+            st.caption(s["entry_type"])
+        with col_conf:
+            st.metric("Confidence", f"{s['confidence']}%")
+        with col_px:
+            st.metric("Gold Price", f"${s['cur_px']:,.2f}")
+        with col_tf:
+            aligned = sum(1 for d in s["tf_dirs"].values() if d == direction)
+            st.metric("TF Aligned", f"{aligned}/{len(s['tf_dirs'])}")
 
-    # Chart
-    st.subheader("Price Chart")
-    ema20_s = compute_ema(df["close"], 20)
-    ema50_s = compute_ema(df["close"], 50)
-    rsi_s   = compute_rsi(df["close"], 14)
-    fig = build_price_chart(df, ema20_s, ema50_s, rsi_s,
-                            entry=entry, sl=sl, tp=tp,
-                            title=f"XAUUSD — {entry_tf}")
-    st.plotly_chart(fig, use_container_width=True)
-    st.caption(
-        f"Last bar: {df.index[-1].strftime('%Y-%m-%d %H:%M UTC')}  |  "
-        f"Models: AutoTheta + AutoETS (Sharpe-weighted)  |  Data: yfinance GC=F"
-    )
+        st.divider()
+
+        c1, c2, c3, c4, c5 = st.columns(5)
+        c1.metric("ATR(14)",  f"${s['atr14']:.2f}")
+        c2.metric("RSI(14)",  f"{s['rsi14']:.1f}")
+        c3.metric("ADX(14)",  f"{s['adx_val']:.1f}", delta="Trending" if s['adx_val'] > 25 else "Ranging")
+        c4.metric("EMA20",    f"${s['ema20_v']:,.2f}", delta="Above" if s['cur_px'] > s['ema20_v'] else "Below")
+        c5.metric("EMA50",    f"${s['ema50_v']:,.2f}", delta="Above" if s['cur_px'] > s['ema50_v'] else "Below")
+
+        st.divider()
+
+        st.subheader("Multi-Timeframe Alignment")
+        tf_cols = st.columns(len(s["tf_dirs"]))
+        for i, (tf_name, d) in enumerate(s["tf_dirs"].items()):
+            with tf_cols[i]:
+                icon  = "▲" if d == "BUY" else ("▼" if d == "SELL" else "?")
+                match = d == direction
+                st.metric(tf_name, f"{icon} {d}",
+                    delta="Aligned" if match else "Conflict",
+                    delta_color="normal" if match else "inverse")
+
+        st.divider()
+
+        left, right = st.columns(2)
+        with left:
+            st.subheader("Ensemble Forecast")
+            rows = []
+            for h in [1, 2, 4]:
+                cum_ens = float(np.cumsum(s["ens"])[h - 1])
+                rows.append({
+                    "Horizon":      f"+{h} bar{'s' if h > 1 else ''}",
+                    "AutoTheta":    f"{np.cumsum(s['theta'])[h-1]*100:+.4f}%",
+                    "AutoETS":      f"{np.cumsum(s['ets'])[h-1]*100:+.4f}%",
+                    "Ensemble":     f"{cum_ens*100:+.4f}%",
+                    "Price Target": f"${s['cur_px'] * np.exp(cum_ens):,.2f}",
+                    "Direction":    "▲ UP" if cum_ens > 0 else "▼ DOWN",
+                })
+            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+        with right:
+            st.subheader("Trade Plan")
+            plan_df = pd.DataFrame([
+                {"Field": "Direction",     "Value": f"{arrow} {direction}"},
+                {"Field": "Entry",         "Value": f"${s['entry']:,.3f}"},
+                {"Field": "Stop Loss",     "Value": f"${s['sl']:,.3f}  ({s['sl_dist']:.2f} pts = {atr_mult}x ATR)"},
+                {"Field": "Take Profit",   "Value": f"${s['tp']:,.3f}  ({abs(s['tp']-s['entry']):.2f} pts)"},
+                {"Field": "R:R",           "Value": f"1:{s['rr_actual']:.2f}"},
+                {"Field": "Position Size", "Value": f"{s['pos_oz']:.4f} oz"},
+                {"Field": "Risk $",        "Value": f"${s['risk_usd']:.2f}  ({risk_pct:.1%})"},
+                {"Field": "Max Gain",      "Value": f"${s['reward_usd']:.2f}"},
+            ])
+            st.dataframe(plan_df, use_container_width=True, hide_index=True)
+
+        st.divider()
+        if s["confidence"] >= 70:
+            st.success(f"Strong signal — {s['confidence']}% confidence. Key factors aligned.")
+        elif s["confidence"] >= 55:
+            st.warning(f"Moderate signal — {s['confidence']}% confidence. Consider 50% position size.")
+        else:
+            st.error(f"Weak signal — {s['confidence']}%. Timeframes conflicting. Best to skip.")
+
+        if direction == "SELL" and s["rsi14"] < 35:
+            st.warning("RSI oversold — counter-trend SELL. Higher reversal risk.")
+        elif direction == "BUY" and s["rsi14"] > 65:
+            st.warning("RSI overbought — counter-trend BUY. Higher reversal risk.")
+
+        st.divider()
+        st.subheader("Price Chart")
+        df       = s["df"]
+        ema20_s  = compute_ema(df["close"], 20)
+        ema50_s  = compute_ema(df["close"], 50)
+        rsi_s    = compute_rsi(df["close"], 14)
+        fig = build_price_chart(df, ema20_s, ema50_s, rsi_s,
+                                entry=s["entry"], sl=s["sl"], tp=s["tp"],
+                                title=f"XAUUSD — {s['entry_tf']}")
+        st.plotly_chart(fig, use_container_width=True)
+        st.caption(
+            f"Last bar: {df.index[-1].strftime('%Y-%m-%d %H:%M UTC')}  |  "
+            f"Models: AutoTheta + AutoETS (Sharpe-weighted)  |  Data: yfinance GC=F"
+        )
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -536,7 +471,6 @@ with tab_signal:
 
 with tab_live:
 
-    # Auto-refresh state
     if "live_last" not in st.session_state:
         st.session_state.live_last = 0.0
     if "live_running" not in st.session_state:
@@ -546,13 +480,12 @@ with tab_live:
     with col_hdr:
         st.markdown("### 📡 Live Gold — 1 Min")
     with col_btn:
-        if st.button("⏸ Pause" if st.session_state.live_running else "▶ Resume",
-                     use_container_width=True):
+        label = "⏸ Pause" if st.session_state.live_running else "▶ Resume"
+        if st.button(label, use_container_width=True):
             st.session_state.live_running = not st.session_state.live_running
 
-    # Fetch 1-min data
-    chart_placeholder = st.empty()
-    stats_placeholder = st.empty()
+    chart_placeholder    = st.empty()
+    stats_placeholder    = st.empty()
     progress_placeholder = st.empty()
 
     try:
@@ -568,21 +501,19 @@ with tab_live:
 
         with stats_placeholder.container():
             sc1, sc2, sc3, sc4, sc5 = st.columns(5)
-            sc1.metric("Gold Price",  f"${cur:,.2f}", delta=f"{chg:+.2f} ({pct:+.2f}%)",
+            sc1.metric("Gold Price",   f"${cur:,.2f}", delta=f"{chg:+.2f} ({pct:+.2f}%)",
                        delta_color="normal" if chg >= 0 else "inverse")
             sc2.metric("Session High", f"${high:,.2f}")
             sc3.metric("Session Low",  f"${low:,.2f}")
-            sc4.metric("ATR(14) 1m",   f"${atr1m:.3f}")
+            sc4.metric("ATR(14) 1m",  f"${atr1m:.3f}")
             sc5.metric("Bars",         f"{len(df_1m)}")
 
         ema20_1m = compute_ema(df_1m["close"], 20)
         ema50_1m = compute_ema(df_1m["close"], 50)
         rsi_1m   = compute_rsi(df_1m["close"], 14)
-
         fig_live = build_price_chart(
             df_1m, ema20_1m, ema50_1m, rsi_1m,
-            title="XAUUSD — 1 Min (Live)",
-            lookback=200,
+            title="XAUUSD — 1 Min (Live)", lookback=200,
         )
         fig_live.update_layout(height=660)
 
@@ -596,9 +527,9 @@ with tab_live:
     except Exception as e:
         chart_placeholder.error(f"Failed to load 1-min data: {e}  —  Markets may be closed.")
 
-    # Auto-refresh countdown
+    # Auto-refresh
     if st.session_state.live_running:
-        now = time.time()
+        now     = time.time()
         elapsed = now - st.session_state.live_last
 
         if elapsed >= live_refresh:
