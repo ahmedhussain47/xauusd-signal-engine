@@ -135,7 +135,7 @@ def run_forecast(df: pd.DataFrame, season: int, freq: str, h: int = 4):
 # ── Signal helpers ────────────────────────────────────────────────────────────
 
 def compute_confidence(direction, rsi, adx_val, pdi, ndi, ema20, cur_px, tf_dirs):
-    score = 50
+    score = 30                                   # conservative baseline (was 50)
     if adx_val > 25:   score += 10
     elif adx_val > 20: score += 5
     if direction == "BUY"  and pdi > ndi:        score += 10
@@ -311,7 +311,19 @@ with tab_signal:
             adx_val, pdi, ndi = compute_adx(df, 14)
 
             theta, ets, ens = run_forecast(df, cfg["season"], cfg["freq"], h=4)
-            direction = "SELL" if ens[0] < 0 else "BUY"
+            pred_return = float(ens[0])
+
+            # Gate: model must predict at least 0.02% move — below this is noise
+            MIN_PRED_RETURN = 0.0002
+            if abs(pred_return) < MIN_PRED_RETURN:
+                st.warning(
+                    f"**NO SIGNAL** — Model predicted return is too small "
+                    f"({pred_return*100:+.4f}%). "
+                    f"Threshold: ±{MIN_PRED_RETURN*100:.2f}%. Market likely ranging."
+                )
+                st.stop()
+
+            direction = "SELL" if pred_return < 0 else "BUY"
 
             sweep_tfs = {k: v for k, v in TIMEFRAMES.items() if k != "1 min"}
             tf_dirs, tf_returns = {}, {}
@@ -341,7 +353,7 @@ with tab_signal:
                 entry_type=entry_type, confidence=confidence,
                 cur_px=cur_px, atr14=atr14, ema20_v=ema20_v, ema50_v=ema50_v,
                 rsi14=rsi14, adx_val=adx_val, pdi=pdi, ndi=ndi,
-                theta=theta, ets=ets, ens=ens,
+                theta=theta, ets=ets, ens=ens, pred_return=pred_return,
                 tf_dirs=tf_dirs, entry=entry, sl=sl, tp=tp,
                 sl_dist=sl_dist, risk_usd=risk_usd, pos_oz=pos_oz,
                 reward_usd=reward_usd, rr_actual=rr_actual,
@@ -367,7 +379,7 @@ with tab_signal:
 
         st.caption(f"Generated at {s['generated_at']}  |  Click Generate Signal to refresh.")
 
-        col_sig, col_conf, col_px, col_tf = st.columns([3, 1, 1, 1])
+        col_sig, col_conf, col_px, col_tf, col_ret = st.columns([3, 1, 1, 1, 1])
         with col_sig:
             st.markdown(
                 f"<h2 style='color:{'#00C853' if direction=='BUY' else '#FF1744'};margin:0'>"
@@ -382,6 +394,10 @@ with tab_signal:
         with col_tf:
             aligned = sum(1 for d in s["tf_dirs"].values() if d == direction)
             st.metric("TF Aligned", f"{aligned}/{len(s['tf_dirs'])}")
+        with col_ret:
+            pr = s.get("pred_return", 0.0)
+            st.metric("Model Return", f"{pr*100:+.3f}%",
+                      help="Raw ensemble predicted return for bar+1. Below ±0.02% = noise.")
 
         st.divider()
 
