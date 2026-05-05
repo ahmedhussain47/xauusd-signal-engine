@@ -254,20 +254,14 @@ def compute_entry(direction, cur_px, ema20):
 
 
 def compute_sl_tp(df, direction, entry, atr14, swing_bars, atr_mult, rr_ratio):
-    s_high = float(df["high"].tail(swing_bars).max())
-    s_low  = float(df["low"].tail(swing_bars).min())
-    atr_sl = atr14 * atr_mult
+    sl_dist = round(atr14 * atr_mult, 3)
     if direction == "SELL":
-        # SL above swing high or ATR, whichever is wider
-        sl      = round(max(entry + atr_sl, s_high + atr14 * 0.3), 2)
-        sl_dist = sl - entry
-        tp      = round(entry - sl_dist * rr_ratio, 2)   # guaranteed R:R
+        sl = round(entry + sl_dist, 3)
+        tp = round(entry - sl_dist * rr_ratio, 3)
     else:
-        # SL below swing low or ATR, whichever is wider
-        sl      = round(min(entry - atr_sl, s_low - atr14 * 0.3), 2)
-        sl_dist = entry - sl
-        tp      = round(entry + sl_dist * rr_ratio, 2)   # guaranteed R:R
-    return sl, tp, abs(sl_dist)
+        sl = round(entry - sl_dist, 3)
+        tp = round(entry + sl_dist * rr_ratio, 3)
+    return sl, tp, sl_dist
 
 
 # ── Chart builder ─────────────────────────────────────────────────────────────
