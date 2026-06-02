@@ -22,7 +22,11 @@
       "Bash(git checkout *)",
       "Bash(git commit *)",
       "Bash(git push *)",
-      "Bash(git stash *)"
+      "Bash(git stash *)",
+      "Bash(dir \"c:\\\\Users\\\\user\\\\OneDrive\\\\Desktop\\\\Praktikum\\\\Final-Project\\\\new_equity_forecasting_project\\\\src\")",
+      "PowerShell(pip install MetaTrader5)",
+      "PowerShell(python -c \"import torch; print\\(torch.__version__\\)\")",
+      "PowerShell(python -c \"import chronos; print\\('chronos ok'\\)\")"
     ]
   }
 }
