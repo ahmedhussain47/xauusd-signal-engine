@@ -26,7 +26,8 @@
       "Bash(dir \"c:\\\\Users\\\\user\\\\OneDrive\\\\Desktop\\\\Praktikum\\\\Final-Project\\\\new_equity_forecasting_project\\\\src\")",
       "PowerShell(pip install MetaTrader5)",
       "PowerShell(python -c \"import torch; print\\(torch.__version__\\)\")",
-      "PowerShell(python -c \"import chronos; print\\('chronos ok'\\)\")"
+      "PowerShell(python -c \"import chronos; print\\('chronos ok'\\)\")",
+      "Bash(git config *)"
     ]
   }
 }
