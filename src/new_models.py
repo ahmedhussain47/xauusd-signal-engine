@@ -293,7 +293,25 @@ class ChronosZeroShotForecaster:
             device = "cuda" if torch.cuda.is_available() else "cpu"
         dtype = torch.bfloat16 if device == "cuda" else torch.float32
         self.torch = torch
-        self.pipeline = BaseChronosPipeline.from_pretrained(model_id, device_map=device, torch_dtype=dtype)
+
+        # ── FIX: Use to_empty() for meta tensor loading ──────────────────
+        # Avoids: "Cannot copy out of meta tensor; no data! Please use torch.nn.Module.to_empty()"
+        try:
+            # Load with device_map first
+            self.pipeline = BaseChronosPipeline.from_pretrained(
+                model_id,
+                device_map="cpu",  # Start on CPU to avoid meta tensor issues
+                torch_dtype=dtype
+            )
+            # Then move to target device if needed
+            if device != "cpu":
+                self.pipeline = self.pipeline.to(device)
+        except Exception as e:
+            # Fallback: load without device_map and move explicitly
+            print(f"Chronos device_map failed ({e}), trying fallback...")
+            self.pipeline = BaseChronosPipeline.from_pretrained(model_id, torch_dtype=dtype)
+            self.pipeline = self.pipeline.to(device)
+
         self.model_id = model_id
         self.device = device
 

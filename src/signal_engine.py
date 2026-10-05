@@ -44,6 +44,7 @@ import numpy as np
 import pandas as pd
 
 from .feature_engineering import atr, build_multi_tf_snapshot, pivot_levels, rsi as _rsi_fn
+from .telegram_notifier import get_telegram_notifier
 
 logger = logging.getLogger(__name__)
 
@@ -165,6 +166,26 @@ class Signal:
 
     def to_json(self, indent: int = 2) -> str:
         return json.dumps(self.to_dict(), indent=indent)
+
+    def send_to_telegram(self) -> bool:
+        """Send this signal to Telegram. Returns True if successful."""
+        notifier = get_telegram_notifier()
+        if not notifier.is_configured():
+            logger.warning("Telegram not configured, skipping notification")
+            return False
+        return notifier.send_signal(
+            asset=self.asset,
+            direction=self.signal,
+            entry=self.entry,
+            take_profit=self.take_profit,
+            stop_loss=self.stop_loss,
+            confidence=self.confidence,
+            timeframe=self.timeframe,
+            atr_value=self.atr_value,
+            rr_ratio=self.rr_ratio,
+            model_pred=self.model_pred,
+            tf_alignment=self.tf_alignment,
+        )
 
     def __str__(self) -> str:
         return (
@@ -355,6 +376,7 @@ def _compute_confidence(
     available_tfs:    List[str],
     model_pred:       Optional[float],
     model_threshold:  float,
+    signal_tf:        Optional[str] = None,
 ) -> int:
     """
     Combine per-timeframe scores into a 0–100 integer confidence score.
@@ -362,12 +384,41 @@ def _compute_confidence(
     Timeframes that agree with final_direction add to the score;
     opposing ones subtract (weighted by TF_WEIGHTS).
     Model prediction adds up to 15 bonus points.
+
+    NEW: If signal_tf is provided (the entry timeframe that generated the signal),
+    apply timeframe-specific weightage:
+        - Signal timeframe (+25%):     0.75x multiplier → 1.0x
+        - Higher timeframes (+15%):    weight * 1.15
+        - Lower timeframes (+10%):     weight * 1.10
+    This gives higher confidence to signals where the entry timeframe indicators
+    are also aligned.
     """
     # Normalise weights to only the timeframes we actually have
     present_weights = {tf: TF_WEIGHTS.get(tf, 0.05) for tf in available_tfs if tf in tf_scores}
     weight_sum = sum(present_weights.values())
     if weight_sum == 0.0:
         return 0
+
+    # Apply timeframe-specific weightage if signal_tf is provided
+    if signal_tf is not None and signal_tf in present_weights:
+        tf_idx_map = {tf: i for i, tf in enumerate(TF_ORDER)}
+        signal_tf_idx = tf_idx_map.get(signal_tf, -1)
+
+        for tf in present_weights:
+            tf_idx = tf_idx_map.get(tf, -1)
+
+            if tf == signal_tf:
+                # Signal timeframe gets +25% boost (0.75x → 1.0x)
+                present_weights[tf] *= 1.25
+            elif tf_idx > signal_tf_idx:
+                # Higher timeframe gets +15% boost
+                present_weights[tf] *= 1.15
+            elif tf_idx < signal_tf_idx:
+                # Lower timeframe gets +10% boost
+                present_weights[tf] *= 1.10
+
+    # Re-normalise all weights to sum to 1.0
+    weight_sum = sum(present_weights.values())
 
     weighted_score = 0.0
     for tf, w_raw in present_weights.items():
@@ -429,6 +480,7 @@ class SignalEngine:
         atr_sl_mult:          float = 1.5,
         model_fn:             Optional[Callable[[pd.DataFrame], float]] = None,
         model_threshold:      float = 0.003,
+        notify_telegram:      bool  = False,
     ):
         self.asset                = asset
         self.rr_ratio             = rr_ratio
@@ -436,6 +488,7 @@ class SignalEngine:
         self.confidence_threshold = confidence_threshold
         self.model_fn             = model_fn
         self.model_threshold      = model_threshold
+        self.notify_telegram      = notify_telegram
 
         raw_tfs = timeframes or self.DEFAULT_TIMEFRAMES
         self.timeframes = [tf for tf in TF_ORDER if tf in raw_tfs]
@@ -540,13 +593,14 @@ class SignalEngine:
                 except Exception as exc:
                     logger.warning("%s: model inference failed: %s", self.asset, exc)
 
-        # 6. Confidence
+        # 6. Confidence (with timeframe-specific weightage)
         confidence = _compute_confidence(
             tf_scores       = tf_scores,
             final_direction = final_direction,
             available_tfs   = available_tfs,
             model_pred      = model_pred,
             model_threshold = self.model_threshold,
+            signal_tf       = self.entry_tf,   # Pass entry TF to boost its indicators
         )
         if macro_neutral:
             confidence = min(confidence, 70)     # Cap when macro is unclear
@@ -648,6 +702,11 @@ class SignalEngine:
 
         self._last_signal_ts = now
         logger.info("Signal generated: %s", signal)
+
+        # Send to Telegram if enabled
+        if self.notify_telegram:
+            signal.send_to_telegram()
+
         return signal
 
     # ── Batch generation ───────────────────────────────────────────────────────
